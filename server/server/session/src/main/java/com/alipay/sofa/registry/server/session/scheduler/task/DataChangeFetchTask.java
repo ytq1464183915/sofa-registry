@@ -26,6 +26,7 @@ import com.alipay.sofa.registry.core.model.ScopeEnum;
 import com.alipay.sofa.registry.log.Logger;
 import com.alipay.sofa.registry.log.LoggerFactory;
 import com.alipay.sofa.registry.server.session.bootstrap.SessionServerConfig;
+import com.alipay.sofa.registry.server.session.cache.CacheAccessException;
 import com.alipay.sofa.registry.server.session.cache.CacheService;
 import com.alipay.sofa.registry.server.session.cache.DatumKey;
 import com.alipay.sofa.registry.server.session.cache.Key;
@@ -117,14 +118,6 @@ public class DataChangeFetchTask extends AbstractSessionTask {
                             Collection<Subscriber> subscribersSend = subscribersVersionCheck(subscriberMap
                                 .values());
                             if (subscribersSend.isEmpty()) {
-                                if (LOGGER.isDebugEnabled()) {
-                                    LOGGER
-                                        .debug(
-                                            "Subscribers to send empty,which dataInfoId:{} on dataCenter:{},scope:{},address:{},size:{}",
-                                            dataChangeRequest.getDataInfoId(),
-                                            dataChangeRequest.getDataCenter(), scopeEnum,
-                                            entry.getKey(), subscriberMap.size());
-                                }
                                 continue;
                             }
 
@@ -197,7 +190,8 @@ public class DataChangeFetchTask extends AbstractSessionTask {
 
     public PushTaskClosure getTaskClosure() {
         //this for all this dataInfoId push result get and call back to change version
-        PushTaskClosure pushTaskClosure = new PushTaskClosure(executorManager.getPushTaskCheckAsyncHashedWheelTimer(),sessionServerConfig,dataChangeRequest.getDataInfoId());
+        PushTaskClosure pushTaskClosure = new PushTaskClosure(executorManager.getPushTaskCheckAsyncHashedWheelTimer(),
+                sessionServerConfig, dataChangeRequest.getDataInfoId());
         pushTaskClosure.setTaskClosure((status, task) -> {
             String dataCenter = dataChangeRequest.getDataCenter();
             String dataInfoId = dataChangeRequest.getDataInfoId();
@@ -274,7 +268,14 @@ public class DataChangeFetchTask extends AbstractSessionTask {
         DatumKey datumKey = new DatumKey(dataChangeRequest.getDataInfoId(),
             dataChangeRequest.getDataCenter());
         Key key = new Key(KeyType.OBJ, datumKey.getClass().getName(), datumKey);
-        Value<Datum> value = sessionCacheService.getValue(key);
+
+        Value<Datum> value = null;
+        try {
+            value = sessionCacheService.getValue(key);
+        } catch (CacheAccessException e) {
+            LOGGER.error(String.format("error when access cache: %s", e.getMessage()), e);
+        }
+
         return value == null ? null : value.getPayload();
     }
 

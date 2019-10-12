@@ -16,11 +16,6 @@
  */
 package com.alipay.sofa.registry.server.data.remoting.dataserver.handler;
 
-import java.util.Map;
-import java.util.Map.Entry;
-
-import org.springframework.beans.factory.annotation.Autowired;
-
 import com.alipay.remoting.Connection;
 import com.alipay.sofa.registry.common.model.CommonResponse;
 import com.alipay.sofa.registry.common.model.GenericResponse;
@@ -28,6 +23,7 @@ import com.alipay.sofa.registry.common.model.Node;
 import com.alipay.sofa.registry.common.model.dataserver.Datum;
 import com.alipay.sofa.registry.common.model.dataserver.GetDataRequest;
 import com.alipay.sofa.registry.common.model.dataserver.NotifyFetchDatumRequest;
+import com.alipay.sofa.registry.common.model.store.Publisher;
 import com.alipay.sofa.registry.log.Logger;
 import com.alipay.sofa.registry.log.LoggerFactory;
 import com.alipay.sofa.registry.remoting.Channel;
@@ -42,8 +38,13 @@ import com.alipay.sofa.registry.server.data.change.event.DataChangeEventCenter;
 import com.alipay.sofa.registry.server.data.executor.ExecutorFactory;
 import com.alipay.sofa.registry.server.data.remoting.dataserver.DataServerConnectionFactory;
 import com.alipay.sofa.registry.server.data.remoting.handler.AbstractServerHandler;
+import com.alipay.sofa.registry.server.data.renew.LocalDataServerCleanHandler;
 import com.alipay.sofa.registry.server.data.util.TimeUtil;
 import com.alipay.sofa.registry.util.ParaCheckUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.Map;
+import java.util.Map.Entry;
 
 /**
  *
@@ -73,6 +74,9 @@ public class NotifyFetchDatumHandler extends AbstractServerHandler<NotifyFetchDa
     @Autowired
     private DatumCache                  datumCache;
 
+    @Autowired
+    private LocalDataServerCleanHandler localDataServerCleanHandler;
+
     @Override
     public void checkParam(NotifyFetchDatumRequest request) throws RuntimeException {
         ParaCheckUtil.checkNotBlank(request.getIp(), "ip");
@@ -81,6 +85,10 @@ public class NotifyFetchDatumHandler extends AbstractServerHandler<NotifyFetchDa
     @Override
     public Object doHandle(Channel channel, NotifyFetchDatumRequest request) {
         ParaCheckUtil.checkNotBlank(request.getIp(), "ip");
+
+        //receive other data NotifyFetchDatumRequest,must delay clean datum task until fetch all datum
+        localDataServerCleanHandler.reset();
+
         Map<String, Map<String, Long>> versionMap = request.getDataVersionMap();
         long version = request.getChangeVersion();
         String ip = request.getIp();
@@ -135,8 +143,7 @@ public class NotifyFetchDatumHandler extends AbstractServerHandler<NotifyFetchDa
      * @param dataInfoId
      */
     private void fetchDatum(String targetIp, String dataCenter, String dataInfoId) {
-        while ((dataServerCache.getDataServers(dataServerConfig.getLocalDataCenter()).keySet())
-            .contains(targetIp)) {
+        while (dataServerConnectionFactory.getConnection(targetIp) != null) {
             Connection connection = dataServerConnectionFactory.getConnection(targetIp);
             if (connection == null || !connection.isFine()) {
                 throw new RuntimeException(String.format("connection of %s is not available",
@@ -151,6 +158,7 @@ public class NotifyFetchDatumHandler extends AbstractServerHandler<NotifyFetchDa
                 if (response.isSuccess()) {
                     Datum datum = response.getData().get(dataCenter);
                     if (datum != null) {
+                        processDatum(datum);
                         dataChangeEventCenter.sync(DataChangeTypeEnum.COVER,
                             DataSourceTypeEnum.BACKUP, datum);
                         LOGGER
@@ -165,6 +173,16 @@ public class NotifyFetchDatumHandler extends AbstractServerHandler<NotifyFetchDa
             } catch (Exception e) {
                 LOGGER.error("[NotifyFetchDatumHandler] fetch datum error", e);
                 TimeUtil.randomDelay(500);
+            }
+        }
+    }
+
+    private void processDatum(Datum datum) {
+        if (datum != null) {
+            Map<String, Publisher> publisherMap = datum.getPubMap();
+
+            if (publisherMap != null && !publisherMap.isEmpty()) {
+                publisherMap.forEach((registerId, publisher) -> Publisher.processPublisher(publisher));
             }
         }
     }

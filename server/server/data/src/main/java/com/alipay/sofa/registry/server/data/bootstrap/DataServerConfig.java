@@ -55,9 +55,9 @@ public class DataServerConfig {
 
     private int                queueSize;
 
-    private int                notifyIntervalMs                             = 500;
+    private int                notifyIntervalMs;
 
-    private int                clientOffDelayMs                             = 1000;
+    private int                clientOffDelayMs;
 
     private int                notifyTempDataIntervalMs;
 
